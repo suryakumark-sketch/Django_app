@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>AI Chat</title>
+
+    <style>
+        * {
+            box-sizing: border-box;
+            font-family: Arial, sans-serif;
+        }
+
+        body {
+            margin: 0;
+            height: 100vh;
+            display: flex;
+            background: #f5f5f5;
+        }
+
+        /* SIDEBAR */
+        .sidebar {
+            width: 260px;
+            background: #202123;
+            color: white;
+            display: flex;
+            flex-direction: column;
+            padding: 12px;
+        }
+
+        .new-chat {
+            padding: 10px;
+            background: #343541;
+            border: none;
+            border-radius: 6px;
+            color: white;
+            cursor: pointer;
+            margin-bottom: 12px;
+        }
+
+        .history-title {
+            margin: 12px 0 8px;
+            font-size: 12px;
+            color: #9ca3af;
+            letter-spacing: 1px;
+        }
+
+        .chat-history {
+            flex: 1;
+            overflow-y: auto;
+        }
+
+        .chat-item {
+            padding: 10px;
+            margin-bottom: 8px;
+            background: #1f2937;
+            border-radius: 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            cursor: pointer;
+        }
+
+        .chat-item span {
+            flex: 1;
+            overflow: hidden;
+            white-space: nowrap;
+            text-overflow: ellipsis;
+        }
+
+        .chat-item:hover {
+            background: #374151;
+        }
+
+        .delete-btn {
+            background: none;
+            border: none;
+            color: #ef4444;
+            cursor: pointer;
+            font-size: 14px;
+        }
+
+        .logout a {
+            display: block;
+            padding: 10px;
+            background: #ff4d4d;
+            color: white;
+            text-align: center;
+            border-radius: 6px;
+            text-decoration: none;
+        }
+
+        /* MAIN */
+        .main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background: white;
+        }
+
+        .chat-box {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+        }
+
+        .message {
+            max-width: 70%;
+            padding: 10px 14px;
+            margin-bottom: 12px;
+            border-radius: 8px;
+            word-wrap: break-word;
+        }
+
+        .user {
+            background: #daf1ff;
+            margin-left: auto;
+        }
+
+        .ai {
+            background: #eeeeee;
+            margin-right: auto;
+        }
+
+        .input-area {
+            padding: 15px;
+            border-top: 1px solid #ddd;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .input-area input[type="text"] {
+            flex: 1;
+            padding: 12px;
+            border-radius: 6px;
+            border: 1px solid #ccc;
+        }
+
+        .input-area button {
+            padding: 12px 16px;
+            background: #10a37f;
+            border: none;
+            color: white;
+            border-radius: 6px;
+            cursor: pointer;
+        }
+
+        .upload-btn {
+            background: #e5e7eb;
+            color: #111827;
+        }
+    </style>
+</head>
+
+<body>
+
+<div class="sidebar">
+    <button class="new-chat" onclick="startNewChat()">+ New chat</button>
+
+    <div class="history-title">CHAT HISTORY</div>
+    <div class="chat-history" id="chatHistory"></div>
+
+    <div class="logout">
+        <a href="{% url 'logout' %}">Logout</a>
+    </div>
+</div>
+
+<div class="main">
+    <div class="chat-box" id="chatBox"></div>
+
+    <div class="input-area">
+        <button class="upload-btn" onclick="document.getElementById('docInput').click()">➕</button>
+        <input type="file" id="docInput" hidden />
+
+        <input type="text" id="messageInput" placeholder="Message ChatGPT..." />
+        <button onclick="sendMessage()">Send</button>
+    </div>
+</div>
+
+{% csrf_token %}
+
+<script>
+let currentChatId = null;
+
+const chatBox = document.getElementById("chatBox");
+const historyBox = document.getElementById("chatHistory");
+const input = document.getElementById("messageInput");
+
+function getCSRF() {
+    return document.querySelector('[name=csrfmiddlewaretoken]').value;
+}
+
+function addMessage(text, role) {
+    const div = document.createElement("div");
+    div.className = "message " + role;
+    div.innerText = text;
+    chatBox.appendChild(div);
+    chatBox.scrollTop = chatBox.scrollHeight;
+}
+
+/* SEND MESSAGE */
+function sendMessage() {
+    const msg = input.value.trim();
+    if (!msg) return;
+
+    addMessage(msg, "user");
+    input.value = "";
+
+    fetch("/chat/", {
+
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            "X-CSRFToken": getCSRF()
+        },
+        body: JSON.stringify({
+            message: msg,
+            chat_id: currentChatId
+        })
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.reply) {
+            addMessage(data.reply, "ai");
+            currentChatId = data.chat_id;
+            loadChats();
+        } else {
+            addMessage("⚠️ No reply from AI", "ai");
+        }
+    })
+    .catch(() => {
+        addMessage("❌ Server error", "ai");
+    });
+}
+
+/* LOAD CHAT HISTORY */
+function loadChats() {
+    fetch("/chats/")
+        .then(res => res.json())
+        .then(data => {
+            historyBox.innerHTML = "";
+            data.chats.forEach(chat => {
+                const div = document.createElement("div");
+                div.className = "chat-item";
+                div.innerHTML = `
+                    <span onclick="openChat(${chat.id})">${chat.title}</span>
+                    <button class="delete-btn" onclick="deleteChat(${chat.id})">🗑</button>
+                `;
+                historyBox.appendChild(div);
+            });
+        });
+}
+
+/* OPEN CHAT */
+function openChat(chatId) {
+    currentChatId = chatId;
+    chatBox.innerHTML = "";
+
+    fetch(`/chat/${chatId}/messages/`)
+        .then(res => res.json())
+        .then(data => {
+            data.messages.forEach(m => {
+                addMessage(m.message, m.role === "user" ? "user" : "ai");
+            });
+        });
+}
+
+/* DELETE CHAT */
+function deleteChat(chatId) {
+    fetch(`/chat/${chatId}/delete/`, {
+        method: "POST",
+        headers: { "X-CSRFToken": getCSRF() }
+    }).then(() => {
+        if (currentChatId === chatId) {
+            chatBox.innerHTML = "";
+            currentChatId = null;
+        }
+        loadChats();
+    });
+}
+
+/* NEW CHAT */
+function startNewChat() {
+    currentChatId = null;
+    chatBox.innerHTML = "";
+}
+
+/* ENTER KEY */
+input.addEventListener("keydown", e => {
+    if (e.key === "Enter") sendMessage();
+});
+
+/* DOCUMENT UPLOAD */
+document.getElementById("docInput").addEventListener("change", function () {
+    const file = this.files[0];
+    if (!file || !currentChatId) {
+        alert("Start a chat before uploading.");
+        return;
+    }
+
+    addMessage(`📎 Uploaded: ${file.name}`, "user");
+
+    const formData = new FormData();
+    formData.append("document", file);
+    formData.append("chat_id", currentChatId);
+
+    fetch("/upload/", {
+        method: "POST",
+        headers: { "X-CSRFToken": getCSRF() },
+        body: formData
+    })
+    .then(res => res.json())
+    .then(data => {
+        addMessage(data.reply, "ai");
+    })
+    .catch(() => {
+        addMessage("❌ Upload failed", "ai");
+    });
+});
+
+/* INIT */
+document.addEventListener("DOMContentLoaded", loadChats);
+</script>
+
+</body>
+</html>
