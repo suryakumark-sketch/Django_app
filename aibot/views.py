@@ -5,6 +5,7 @@ from django.shortcuts import render, get_object_or_404, redirect
 from django.http import JsonResponse
 from django.urls import reverse
 from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.cache import cache_control
 from django.contrib.auth.forms import UserCreationForm, AuthenticationForm
 from django.contrib.auth import login as auth_login, logout as auth_logout
 from django.contrib.auth.decorators import login_required
@@ -17,11 +18,13 @@ from .utils import extract_text
 
 
 @login_required
+@cache_control(no_cache=True, must_revalidate=True, no_store=True)
 def home(request):
     """ Home Views."""
     return render(request, "aibot/chat.html")
 
 
+@cache_control(no_cache=True, must_revalidate=True, no_store=True)
 def custom_login(request):
     """Custom login view that redirects authenticated users."""
     # If user is already logged in, redirect to chatbot
@@ -39,14 +42,16 @@ def custom_login(request):
     return render(request, "registration/login.html", {"form": form})
 
 
+@cache_control(no_cache=True, must_revalidate=True, no_store=True)
 def custom_logout(request):
     """Custom logout view."""
-    auth_logout(request)
+    auth_logout(request)  # clears session + auth data
     return redirect("/accounts/login/")
 
 
 # pylint: disable=too-many-locals
 @csrf_exempt
+@cache_control(no_cache=True, must_revalidate=True, no_store=True)
 def signup(request):
     """Render signup page and handle registration."""
     # If user is already logged in, redirect to chatbot
@@ -66,9 +71,10 @@ def signup(request):
 
 
 # pylint: disable=too-many-locals
+@login_required
 @csrf_exempt
 def chat_api(request):
-    """ Chat API."""
+    """ Chat API (per-user, per-chat)."""
     if request.method != "POST":
         return JsonResponse({"reply": "Invalid request"}, status=200)
 
@@ -87,13 +93,18 @@ def chat_api(request):
     if not message:
         return JsonResponse({"reply": "Empty message"}, status=200)
 
-    user = request.user if request.user.is_authenticated else None
+    # Always use the authenticated user for privacy
+    user = request.user
 
     try:
         # ---------------------------
-        # Get or create chat
+        # Get or create chat (scoped to current user)
         # ---------------------------
-        chat = Chat.objects.filter(id=chat_id).first() if chat_id else None
+        chat = (
+            Chat.objects.filter(id=chat_id, user=user).first()
+            if chat_id
+            else None
+        )
         if not chat:
             chat = Chat.objects.create(user=user, title=message[:50])
 
@@ -185,19 +196,22 @@ def chat_api(request):
         )
 
 
+@login_required
+@cache_control(no_cache=True, must_revalidate=True, no_store=True)
 def chats_api(request):
-    """ Chats API."""
-    _ = request
-    chats = Chat.objects.order_by("-id")
+    """ Chats API (per-user, no caching)."""
+    # Only return chats for the logged-in user
+    chats = Chat.objects.filter(user=request.user).order_by("-id")
     return JsonResponse({
         "chats": [{"id": c.id, "title": c.title} for c in chats]
     })
 
 
+@login_required
+@cache_control(no_cache=True, must_revalidate=True, no_store=True)
 def chat_messages_api(request, chat_id):
-    """ Chat Messages API."""
-    _ = request
-    chat = get_object_or_404(Chat, id=chat_id)
+    """ Chat Messages API (per-user)."""
+    chat = get_object_or_404(Chat, id=chat_id, user=request.user)
     return JsonResponse({
         "messages": [
             {"role": m.role, "message": m.message}
@@ -206,18 +220,21 @@ def chat_messages_api(request, chat_id):
     })
 
 
+@login_required
 @csrf_exempt
+@cache_control(no_cache=True, must_revalidate=True, no_store=True)
 def delete_chat(request, chat_id):
-    """ Delete Chat."""
-    _ = request
-    chat = get_object_or_404(Chat, id=chat_id)
+    """ Delete Chat (per-user)."""
+    chat = get_object_or_404(Chat, id=chat_id, user=request.user)
     chat.delete()
     return JsonResponse({"success": True})
 
 
+@login_required
 @csrf_exempt
+@cache_control(no_cache=True, must_revalidate=True, no_store=True)
 def upload_document(request):
-    """ Upload Document."""
+    """ Upload Document (per-user)."""
     if request.method != "POST":
         return JsonResponse({"reply": "POST only"}, status=400)
 
@@ -227,7 +244,7 @@ def upload_document(request):
     if not file or not chat_id:
         return JsonResponse({"reply": "Missing file or chat"})
 
-    chat = get_object_or_404(Chat, id=chat_id)
+    chat = get_object_or_404(Chat, id=chat_id, user=request.user)
 
     extracted_text = extract_text(file)
 
