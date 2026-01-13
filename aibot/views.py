@@ -126,15 +126,31 @@ def chat_api(request):
         # ==================================================
         # ✅ USE ONLY LATEST DOCUMENT (IMPORTANT)
         # ==================================================
-        latest_doc = chat.documents.order_by("-created_at").first()
+        # ==================================================
+        # ✅ USE ALL DOCUMENTS (MULTI-DOC RAG)
+        # ==================================================
+        documents = chat.documents.order_by("-created_at")  # Newest first
         document_text = ""
+        
+        # Max characters for context (approx 20k chars ~ 5k tokens)
+        MAX_CONTEXT_CHARS = 20000 
+        current_chars = 0
 
-        if latest_doc and latest_doc.content and latest_doc.content.strip():
-            # limit size to avoid token overflow
-            document_text = (
-                f"[DOCUMENT: {latest_doc.filename}]\n"
-                f"{latest_doc.content[:8000]}"
-            )
+        for doc in documents:
+            if doc.content and doc.content.strip():
+                # Format: [DOCUMENT: filename.pdf] \n content...
+                content_chunk = f"\n[DOCUMENT: {doc.filename}]\n{doc.content.strip()}\n"
+                
+                # Check if adding this document exceeds limit
+                if current_chars + len(content_chunk) > MAX_CONTEXT_CHARS:
+                    # Truncate if necessary (optional: or just skip older ones)
+                    remaining_space = MAX_CONTEXT_CHARS - current_chars
+                    if remaining_space > 100:  # Only add if meaningful space remains
+                        document_text += content_chunk[:remaining_space] + "\n...[TRUNCATED]..."
+                    break
+                
+                document_text += content_chunk
+                current_chars += len(content_chunk)
 
         # ==================================================
         # 🔍 SMART DETECTION: DOC vs NORMAL CHAT
@@ -154,14 +170,19 @@ def chat_api(request):
             prompt = (
                 "You are a helpful assistant.\n"
                 "Answer the user's question using ONLY the document below.\n"
+                "Provide a detailed, comprehensive explanation with all relevant information from the document.\n"
+                "Write your answer in plain text format without using markdown symbols, formatting characters, or special symbols like ##, **, <br>, |, {, }, or \\.\n"
+                "Write naturally and clearly like ChatGPT, using only regular text.\n"
                 "If the answer is not present in the document, say so clearly.\n\n"
                 f"{document_text}\n\n"
                 f"User question:\n{message}\n\n"
-                "Answer clearly:"
+                "Provide a detailed and comprehensive answer in plain text:"
             )
         else:
             prompt = (
                 "You are a friendly helpful assistant.\n"
+                "Write your response in plain text format without using markdown symbols, formatting characters, or special symbols.\n"
+                "Write naturally and clearly like ChatGPT.\n"
                 f"Conversation so far:\n{conversation_text}\n\n"
                 f"User: {message}\n"
                 "Assistant:"
